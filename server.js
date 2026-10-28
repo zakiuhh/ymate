@@ -34,7 +34,24 @@ function findFfmpeg() {
 
 const YTDLP = findYtDlp();
 const FFMPEG = findFfmpeg();
-const DOWNLOAD_DIR = path.resolve(process.env.DOWNLOAD_DIR || path.join(__dirname, 'downloads'));
+const DEFAULT_DOWNLOAD_DIR = path.resolve(process.env.DOWNLOAD_DIR || path.join(__dirname, 'downloads'));
+const SETTINGS_FILE = path.join(__dirname, 'settings.json');
+
+function loadSettings() {
+  try {
+    return JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+// Chosen in the UI (saved in settings.json); falls back to DOWNLOAD_DIR / ./downloads.
+let downloadDir = path.resolve(loadSettings().downloadDir || DEFAULT_DOWNLOAD_DIR);
+let openWhenDone = loadSettings().openWhenDone !== false; // open the file manager after each download
+
+function saveSettings() {
+  return fsp.writeFile(SETTINGS_FILE, JSON.stringify({ downloadDir, openWhenDone }, null, 2));
+}
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
 const ALLOWED_HOSTS = ['youtube.com', 'youtu.be', 'youtube-nocookie.com'];
@@ -170,6 +187,108 @@ function readJson(req, limit = 10_000) {
   });
 }
 
+function sendFile(req, res, file, size) {
+  const name = path.basename(file);
+  const ascii = name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
+  const stream = fs.createReadStream(file);
+  stream.on('open', () => {
+    res.writeHead(200, {
+      'Content-Type': MIME[path.extname(name).toLowerCase()] || 'application/octet-stream',
+      'Content-Length': size,
+      'Content-Disposition': `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`,
+    });
+    if (req.method === 'HEAD') {
+      res.end();
+      stream.destroy();
+    } else {
+      stream.pipe(res);
+    }
+  });
+  stream.on('error', () => {
+    if (!res.headersSent) sendJson(res, 404, { error: 'File not found. It may have been moved or deleted.' });
+    else res.destroy();
+  });
+  res.on('close', () => stream.destroy());
+}
+
+const isLocal = (req) => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
+
+// Accepts a pasted path (quotes allowed), makes sure it exists and is writable.
+async function validateFolder(input) {
+  if (typeof input !== 'string') throw new Error('Enter a folder path.');
+  const cleaned = input.trim().replace(/^["']+|["']+$/g, '');
+  if (!cleaned) throw new Error('Enter a folder path.');
+  if (!path.isAbsolute(cleaned)) throw new Error('Use a full path, like C:\\Users\\you\\Videos.');
+  const dir = path.resolve(cleaned);
+  try {
+    await fsp.mkdir(dir, { recursive: true });
+    const probeFile = path.join(dir, `.ymate-write-test-${process.pid}`);
+    await fsp.writeFile(probeFile, '');
+    await fsp.rm(probeFile, { force: true });
+  } catch (e) {
+    throw new Error(`Can\u2019t write to that folder (${e.code || e.message}).`);
+  }
+  return dir;
+}
+
+let activePicker = null;
+
+function runPicker(cmd, args, env) {
+  if (activePicker) activePicker.kill(); // replace a dialog that's still open
+  return new Promise((resolve, reject) => {
+    const child = execFile(
+      cmd,
+      args,
+      { timeout: 5 * 60_000, windowsHide: false, env: { ...process.env, ...env }, encoding: 'utf8' },
+      (err, stdout) => {
+        if (err && err.code === 'ENOENT') return reject(new Error('Folder picker isn\u2019t available. Type the path instead.'));
+        resolve(String(stdout || '').trim() || null); // cancelled or replaced -> empty output
+      },
+    );
+    activePicker = child;
+    child.on('close', () => {
+      if (activePicker === child) activePicker = null;
+    });
+  });
+}
+
+// Opens the OS folder chooser on the machine running the server.
+function pickFolder(startDir) {
+  if (process.platform === 'win32') {
+    const script = [
+      '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
+      'Add-Type -AssemblyName System.Windows.Forms',
+      // An invisible, shown, always-on-top owner keeps the dialog in front of the browser.
+      '$owner = New-Object System.Windows.Forms.Form -Property @{ TopMost = $true; ShowInTaskbar = $false; Opacity = 0; StartPosition = "CenterScreen"; Width = 1; Height = 1 }',
+      '$owner.Show()',
+      '$owner.Activate()',
+      '$d = New-Object System.Windows.Forms.FolderBrowserDialog',
+      "$d.Description = 'Choose where to save downloads'",
+      '$d.SelectedPath = $env:YMATE_START',
+      "if ($d.ShowDialog($owner) -eq 'OK') { $d.SelectedPath }",
+      '$owner.Close()',
+    ].join('; ');
+    return runPicker('powershell.exe', ['-NoProfile', '-STA', '-Command', script], { YMATE_START: startDir });
+  }
+  if (process.platform === 'darwin') {
+    return runPicker('osascript', ['-e', 'POSIX path of (choose folder with prompt "Choose where to save downloads")']);
+  }
+  return runPicker('zenity', ['--file-selection', '--directory', '--filename', startDir + path.sep]);
+}
+
+function revealInFolder(file) {
+  let child;
+  if (process.platform === 'win32') {
+    child = spawn('explorer.exe', [`/select,"${file}"`], { windowsHide: false, windowsVerbatimArguments: true });
+  } else if (process.platform === 'darwin') {
+    child = spawn('open', ['-R', file]);
+  } else {
+    child = spawn('xdg-open', [path.dirname(file)]);
+  }
+  child.on('error', () => {});
+  child.unref();
+}
+
 async function uniquePath(dir, name) {
   const ext = path.extname(name);
   const base = path.basename(name, ext);
@@ -231,6 +350,7 @@ function publicJob(job) {
     speed: job.speed,
     eta: job.eta,
     filename: job.file ? path.basename(job.file) : null,
+    folder: job.outDir,
     size: job.size,
     error: job.error,
   };
@@ -265,9 +385,10 @@ function buildDownloadArgs(url, quality, jobDir) {
   return args;
 }
 
-function startJob(url, quality) {
+function startJob(url, quality, fromLocal) {
   const id = crypto.randomBytes(8).toString('hex');
-  const jobDir = path.join(DOWNLOAD_DIR, `.tmp-${id}`);
+  const outDir = downloadDir; // fixed for this job even if the setting changes mid-download
+  const jobDir = path.join(outDir, `.tmp-${id}`);
   fs.mkdirSync(jobDir, { recursive: true });
 
   const job = {
@@ -284,6 +405,8 @@ function startJob(url, quality) {
     listeners: new Set(),
     child: null,
     dir: jobDir,
+    outDir,
+    autoOpen: fromLocal && openWhenDone,
   };
   jobs.set(id, job);
 
@@ -369,11 +492,13 @@ function startJob(url, quality) {
       stats.sort((a, b) => b.size - a.size);
       const winner = stats[0];
 
-      const finalPath = await uniquePath(DOWNLOAD_DIR, winner.n);
+      const finalPath = await uniquePath(outDir, winner.n);
       await fsp.rename(path.join(jobDir, winner.n), finalPath);
 
       job.file = finalPath;
       job.size = winner.size;
+      if (job.autoOpen) revealInFolder(finalPath);
+
       job.status = 'done';
       job.stage = 'Done';
       job.percent = 100;
@@ -420,6 +545,34 @@ async function handleApi(req, res, pathname) {
       return sendJson(res, 200, { ytdlp, ffmpeg: ffmpeg ? ffmpeg.replace(/^ffmpeg version\s+/, '').split(/[\s-]/)[0] : null });
     }
 
+    if (req.method === 'GET' && pathname === '/api/settings') {
+      return sendJson(res, 200, { downloadDir, openWhenDone, local: isLocal(req) });
+    }
+
+    if (req.method === 'POST' && pathname === '/api/settings') {
+      if (!isLocal(req)) return sendJson(res, 403, { error: 'Only the computer running ymate can change this.' });
+      const body = await readJson(req);
+      if (body.downloadDir !== undefined) {
+        try {
+          downloadDir = await validateFolder(body.downloadDir);
+        } catch (e) {
+          return sendJson(res, 400, { error: e.message });
+        }
+      }
+      if (typeof body.openWhenDone === 'boolean') openWhenDone = body.openWhenDone;
+      await saveSettings();
+      return sendJson(res, 200, { downloadDir, openWhenDone });
+    }
+
+    if (req.method === 'POST' && pathname === '/api/pick-folder') {
+      if (!isLocal(req)) return sendJson(res, 403, { error: 'Only the computer running ymate can change this.' });
+      try {
+        return sendJson(res, 200, { path: await pickFolder(downloadDir) });
+      } catch (e) {
+        return sendJson(res, 501, { error: e.message });
+      }
+    }
+
     if (req.method === 'POST' && pathname === '/api/info') {
       const { url } = await readJson(req);
       const clean = parseYouTubeUrl(url);
@@ -432,11 +585,31 @@ async function handleApi(req, res, pathname) {
       const clean = parseYouTubeUrl(url);
       if (!clean) return sendJson(res, 400, { error: 'That doesn\u2019t look like a YouTube link.' });
       if (!QUALITIES.has(String(quality))) return sendJson(res, 400, { error: 'Unknown quality.' });
-      const job = startJob(clean, String(quality));
+      const job = startJob(clean, String(quality), isLocal(req));
       return sendJson(res, 202, { id: job.id });
     }
 
-    const m = pathname.match(/^\/api\/jobs\/([a-f0-9]+)(?:\/(events|file))?$/);
+    // Saved files are served by name so links survive a server restart.
+    const fm = pathname.match(/^\/api\/files\/([^/]+)$/);
+    if (fm && (req.method === 'GET' || req.method === 'HEAD')) {
+      let name;
+      try {
+        name = decodeURIComponent(fm[1]);
+      } catch {
+        return sendJson(res, 400, { error: 'Bad file name.' });
+      }
+      if (name !== path.basename(name) || name.startsWith('.')) {
+        return sendJson(res, 400, { error: 'Bad file name.' });
+      }
+      const file = path.join(downloadDir, name);
+      const stat = await fsp.stat(file).catch(() => null);
+      if (!stat || !stat.isFile()) {
+        return sendJson(res, 404, { error: 'File not found. It may have been moved or deleted.' });
+      }
+      return sendFile(req, res, file, stat.size);
+    }
+
+    const m = pathname.match(/^\/api\/jobs\/([a-f0-9]+)(?:\/(events|file|reveal))?$/);
     if (m) {
       const job = jobs.get(m[1]);
       if (!job) return sendJson(res, 404, { error: 'Job not found.' });
@@ -453,17 +626,16 @@ async function handleApi(req, res, pathname) {
         return;
       }
 
-      if (req.method === 'GET' && m[2] === 'file') {
+      if ((req.method === 'GET' || req.method === 'HEAD') && m[2] === 'file') {
         if (job.status !== 'done' || !job.file) return sendJson(res, 409, { error: 'File is not ready.' });
-        const name = path.basename(job.file);
-        const ascii = name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
-        res.writeHead(200, {
-          'Content-Type': MIME[path.extname(name).toLowerCase()] || 'application/octet-stream',
-          'Content-Length': job.size,
-          'Content-Disposition': `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`,
-        });
-        fs.createReadStream(job.file).pipe(res);
-        return;
+        return sendFile(req, res, job.file, job.size);
+      }
+
+      if (req.method === 'POST' && m[2] === 'reveal') {
+        if (!isLocal(req)) return sendJson(res, 403, { error: 'Only the computer running ymate can do this.' });
+        if (!job.file) return sendJson(res, 409, { error: 'File is not ready.' });
+        revealInFolder(job.file);
+        return sendJson(res, 200, { ok: true });
       }
 
       if (req.method === 'DELETE' && !m[2]) {
@@ -508,10 +680,16 @@ const server = http.createServer((req, res) => {
   else res.writeHead(405).end();
 });
 
-fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
+try {
+  fs.mkdirSync(downloadDir, { recursive: true });
+} catch (e) {
+  console.warn(`! Can't use saved folder "${downloadDir}" (${e.code}). Using ${DEFAULT_DOWNLOAD_DIR}`);
+  downloadDir = DEFAULT_DOWNLOAD_DIR;
+  fs.mkdirSync(downloadDir, { recursive: true });
+}
 // Clean up leftovers from a previous crash.
-for (const n of fs.readdirSync(DOWNLOAD_DIR)) {
-  if (n.startsWith('.tmp-')) fs.rmSync(path.join(DOWNLOAD_DIR, n), { recursive: true, force: true });
+for (const n of fs.readdirSync(downloadDir)) {
+  if (n.startsWith('.tmp-')) fs.rmSync(path.join(downloadDir, n), { recursive: true, force: true });
 }
 
 server.on('error', (e) => {
@@ -537,7 +715,7 @@ server.listen(PORT, HOST, async () => {
     for (const ip of lanAddresses()) console.log(`  Network:  http://${ip}:${PORT}`);
     console.log('  (Anyone on your network can use this. There is no login.)');
   }
-  console.log(`  Saving to ${DOWNLOAD_DIR}\n`);
+  console.log(`  Saving to ${downloadDir}\n`);
   const [ytdlp, ffmpeg] = await Promise.all([probe(YTDLP, ['--version']), probe(FFMPEG, ['-version'])]);
   console.log(ytdlp ? `  yt-dlp ${ytdlp}` : `  ! yt-dlp not found ("${YTDLP}"). See README, "Setup".`);
   console.log(ffmpeg ? '  ffmpeg ok' : '  ! ffmpeg not found. See README, "Setup".');

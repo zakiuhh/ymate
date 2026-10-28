@@ -33,6 +33,7 @@
         <p id="uploader"></p>
       </div>
 
+      <div class="settings">
       <div class="options">
         <span id="quality-title" class="options-label">Quality</span>
         <div class="dropdown" id="quality">
@@ -42,6 +43,23 @@
           </button>
           <ul id="quality-list" class="dd-list" role="listbox" aria-labelledby="quality-title" hidden></ul>
         </div>
+      </div>
+
+      <div class="options" id="folder-row" hidden>
+        <label class="options-label" for="folder">Save to</label>
+        <div class="folder-field">
+          <input id="folder" type="text" spellcheck="false" autocomplete="off" />
+          <button id="browse" type="button" class="quiet">Browse</button>
+        </div>
+      </div>
+
+      <div class="options" id="open-row" hidden>
+        <span class="options-label">When done</span>
+        <label class="tick">
+          <input id="auto-open" type="checkbox" />
+          <span>Open the folder</span>
+        </label>
+      </div>
       </div>
 
       <button id="download" class="primary" type="button">Download</button>
@@ -66,6 +84,8 @@
       </div>
       <h2 id="done-name"></h2>
       <p id="done-meta" class="subtle-text"></p>
+      <p id="done-path" class="path"></p>
+      <button id="reveal" class="primary" type="button" hidden>Show in folder</button>
       <a id="save" class="primary link" href="#" download>Save file</a>
       <button id="again" class="ghost" type="button">Download another</button>
     </section>

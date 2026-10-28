@@ -23,6 +23,13 @@ const els = {
   done: $('done'),
   doneName: $('done-name'),
   doneMeta: $('done-meta'),
+  donePath: $('done-path'),
+  reveal: $('reveal'),
+  folderRow: $('folder-row'),
+  openRow: $('open-row'),
+  autoOpen: $('auto-open'),
+  folder: $('folder'),
+  browse: $('browse'),
   save: $('save'),
   again: $('again'),
   status: $('status'),
@@ -147,6 +154,94 @@ const dropdown = (() => {
   };
 })();
 
+/* ---------- save folder ---------- */
+
+let isLocal = false; // only the machine running ymate can pick folders
+let savedFolder = '';
+
+async function commitFolder() {
+  const value = els.folder.value.trim();
+  if (!isLocal || value === savedFolder) return true;
+  try {
+    const res = await post('/api/settings', { downloadDir: value });
+    savedFolder = res.downloadDir;
+    els.folder.value = savedFolder;
+    setMessage('');
+    return true;
+  } catch (err) {
+    setMessage(err.message);
+    els.folder.value = savedFolder;
+    return false;
+  }
+}
+
+els.folder.addEventListener('change', commitFolder);
+els.folder.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    els.folder.blur();
+  }
+});
+
+// Clicking Browse again while a dialog is open replaces it (and brings it to the front).
+let pickToken = 0;
+els.browse.addEventListener('click', async () => {
+  const token = ++pickToken;
+  els.browse.textContent = 'Choosing…';
+  els.browse.title = 'A folder window should be open. Click again to bring it back.';
+  try {
+    const { path } = await post('/api/pick-folder', {});
+    if (token === pickToken && path) {
+      els.folder.value = path;
+      await commitFolder();
+    }
+  } catch (err) {
+    if (token === pickToken) {
+      setMessage(err.message);
+      els.folder.focus();
+    }
+  } finally {
+    if (token === pickToken) {
+      els.browse.textContent = 'Browse';
+      els.browse.removeAttribute('title');
+    }
+  }
+});
+
+// Check the file exists before letting the browser download it, so a server
+// error shows a message instead of a "save this JSON file" dialog.
+els.save.addEventListener('click', async (e) => {
+  if (els.save.dataset.checked === els.save.href) return;
+  e.preventDefault();
+  try {
+    const res = await fetch(els.save.href, { method: 'HEAD' });
+    if (!res.ok) throw new Error();
+    els.save.dataset.checked = els.save.href;
+    els.save.click();
+  } catch {
+    setMessage('Couldn\u2019t fetch the file. If you just updated ymate, restart it (Ctrl+C, then npm start) and refresh.');
+  }
+});
+
+els.autoOpen.addEventListener('change', () => {
+  post('/api/settings', { openWhenDone: els.autoOpen.checked }).catch((err) => setMessage(err.message));
+});
+
+els.reveal.addEventListener('click', () => {
+  post(`/api/jobs/${els.reveal.dataset.id}/reveal`, {}).catch((err) => setMessage(err.message));
+});
+
+api('/api/settings')
+  .then((s) => {
+    isLocal = s.local;
+    savedFolder = s.downloadDir;
+    els.folder.value = s.downloadDir;
+    els.folderRow.hidden = !isLocal;
+    els.openRow.hidden = !isLocal;
+    els.autoOpen.checked = s.openWhenDone;
+  })
+  .catch(() => {});
+
 let currentUrl = '';
 let currentJob = null;
 let events = null;
@@ -247,6 +342,7 @@ function renderInfo(info) {
 els.download.addEventListener('click', async () => {
   els.download.disabled = true;
   try {
+    if (!(await commitFolder())) return;
     const { id } = await post('/api/download', { url: currentUrl, quality: dropdown.value });
     currentJob = id;
     renderProgress({ status: 'starting', stage: 'Starting', percent: 0 });
@@ -283,7 +379,13 @@ function finish(job) {
   events?.close();
   els.doneName.textContent = job.filename;
   els.doneMeta.textContent = formatBytes(job.size);
-  els.save.href = `/api/jobs/${job.id}/file`;
+  els.donePath.textContent = job.folder ? `Saved in ${job.folder}` : '';
+  els.reveal.dataset.id = job.id;
+  els.reveal.hidden = !isLocal;
+  els.save.href = `/api/files/${encodeURIComponent(job.filename)}`;
+  delete els.save.dataset.checked;
+  els.save.className = isLocal ? 'ghost link' : 'primary link';
+  els.save.textContent = isLocal ? 'Download a copy' : 'Save file';
   show(els.done);
 }
 

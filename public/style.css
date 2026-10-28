@@ -164,7 +164,73 @@ button:disabled { opacity: 0.45; cursor: default; }
   justify-content: space-between;
   gap: 16px;
 }
-.options-label { color: var(--muted); }
+.options-label { color: var(--muted); flex: none; }
+
+.settings { display: flex; flex-direction: column; gap: 16px; }
+
+.folder-field { flex: 1; min-width: 0; display: flex; gap: 8px; }
+.folder-field input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 14px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  outline: 0;
+  text-overflow: ellipsis;
+  transition: border-color 0.2s var(--ease), box-shadow 0.2s var(--ease);
+}
+.folder-field input:hover,
+.folder-field input:focus {
+  border-color: color-mix(in srgb, var(--text) 30%, transparent);
+}
+.folder-field input:focus { box-shadow: 0 0 0 4px color-mix(in srgb, var(--text) 5%, transparent); }
+
+.tick {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+.tick input {
+  flex: none;
+  appearance: none;
+  position: relative;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  border: 1px solid color-mix(in srgb, var(--text) 30%, transparent);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.2s var(--ease), border-color 0.2s var(--ease);
+}
+.tick input:checked { background: var(--accent); border-color: var(--accent); }
+.tick input:checked::after {
+  content: "";
+  position: absolute;
+  left: 5.5px;
+  top: 2px;
+  width: 5px;
+  height: 9px;
+  border-right: 1.75px solid var(--accent-text);
+  border-bottom: 1.75px solid var(--accent-text);
+  transform: rotate(45deg);
+}
+.tick input:focus-visible { box-shadow: 0 0 0 4px color-mix(in srgb, var(--text) 8%, transparent); }
+
+.quiet {
+  flex: none;
+  padding: 0 16px;
+  background: transparent;
+  color: inherit;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.quiet:hover:not(:disabled) { border-color: color-mix(in srgb, var(--text) 30%, transparent); }
 
 /* custom dropdown */
 .dropdown { position: relative; }
@@ -264,6 +330,14 @@ button:disabled { opacity: 0.45; cursor: default; }
   color: var(--muted);
 }
 .ghost:hover { color: var(--text); }
+.ghost.link { display: inline-block; width: auto; text-decoration: none; }
+
+.path {
+  max-width: 100%;
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
 
 /* progress */
 .row {
@@ -327,6 +401,7 @@ button:disabled { opacity: 0.45; cursor: default; }
   .field button { padding: 12px; }
   .options { flex-direction: column; align-items: stretch; gap: 10px; }
   .dd-list { left: 0; }
+  .folder-field { flex: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
