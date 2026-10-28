@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+  <title>ymate</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23111'/%3E%3Cpath d='M12 9.5v13l11-6.5z' fill='%23fff'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="shell">
+    <header class="brand">
+      <h1>ymate</h1>
+      <p>Paste a YouTube link. Get the video.</p>
+    </header>
+
+    <form id="form" class="field" autocomplete="off" novalidate>
+      <input id="url" type="url" inputmode="url" placeholder="https://youtube.com/watch?v=…" aria-label="YouTube link" spellcheck="false" autofocus />
+      <button id="go" type="submit">Continue</button>
+    </form>
+
+    <p id="message" class="message" role="status" hidden></p>
+
+    <section id="card" class="card" hidden>
+      <div class="media">
+        <img id="thumb" alt="" />
+        <span id="duration" class="badge"></span>
+      </div>
+
+      <div class="meta">
+        <h2 id="title"></h2>
+        <p id="uploader"></p>
+      </div>
+
+      <div class="options">
+        <span id="quality-title" class="options-label">Quality</span>
+        <div class="dropdown" id="quality">
+          <button type="button" id="quality-btn" class="dd-btn" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-controls="quality-list" aria-labelledby="quality-title quality-label">
+            <span id="quality-label"></span>
+            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9.5l6 6 6-6"/></svg>
+          </button>
+          <ul id="quality-list" class="dd-list" role="listbox" aria-labelledby="quality-title" hidden></ul>
+        </div>
+      </div>
+
+      <button id="download" class="primary" type="button">Download</button>
+    </section>
+
+    <section id="progress" class="card" hidden>
+      <div class="row">
+        <span id="stage">Starting</span>
+        <span id="percent">0%</span>
+      </div>
+      <div class="bar"><div id="fill"></div></div>
+      <div class="row subtle">
+        <span id="speed"></span>
+        <span id="eta"></span>
+      </div>
+      <button id="cancel" class="ghost" type="button">Cancel</button>
+    </section>
+
+    <section id="done" class="card" hidden>
+      <div class="check" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+      </div>
+      <h2 id="done-name"></h2>
+      <p id="done-meta" class="subtle-text"></p>
+      <a id="save" class="primary link" href="#" download>Save file</a>
+      <button id="again" class="ghost" type="button">Download another</button>
+    </section>
+
+    <footer class="foot">
+      <span id="status"></span>
+    </footer>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

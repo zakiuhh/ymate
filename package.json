@@ -1,0 +1,13 @@
+{
+  "name": "ymate",
+  "version": "1.0.0",
+  "description": "A minimalist web UI for yt-dlp + ffmpeg",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.js"
+  },
+  "engines": {
+    "node": ">=20.6"
+  }
+}
